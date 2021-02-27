@@ -75,6 +75,7 @@ class TextClassifier(ClassificationTask):
         output["y_hat"] = logits
         probs = self.data_pipeline.before_uncollate(logits)
         output["logs"] = {name: metric(probs, batch["labels"]) for name, metric in self.metrics.items()}
+        output["logs"]['loss'] = loss
         return output
 
     @staticmethod
