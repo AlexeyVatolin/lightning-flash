@@ -25,11 +25,20 @@ from transformers.modeling_outputs import SequenceClassifierOutput
 from flash.core.classification import ClassificationDataPipeline
 from flash.core.data import DataModule
 from flash.core.data.utils import _contains_any_tensor
+from transformers.models.bert import BertTokenizerFast
 
 
-def tokenize_text_lambda(tokenizer, input, max_length):
+def tokenize_text_lambda(tokenizer, input, second_input, max_length):
+    if second_input is None:
+        return lambda ex: tokenizer(
+            ex[input],
+            max_length=max_length,
+            truncation=True,
+            padding="max_length",
+        )
     return lambda ex: tokenizer(
         ex[input],
+        text_pair=ex[second_input],
         max_length=max_length,
         truncation=True,
         padding="max_length",
@@ -37,17 +46,18 @@ def tokenize_text_lambda(tokenizer, input, max_length):
 
 
 def prepare_dataset(
-    tokenizer,
-    train_file,
-    valid_file,
-    test_file,
-    filetype,
-    backbone,
-    input,
-    max_length,
-    target=None,
-    label_to_class_mapping=None,
-    predict=False,
+        tokenizer,
+        train_file,
+        valid_file,
+        test_file,
+        filetype,
+        backbone,
+        input,
+        max_length,
+        second_input=None,
+        target=None,
+        label_to_class_mapping=None,
+        predict=False,
 ):
     data_files = {}
 
@@ -77,7 +87,7 @@ def prepare_dataset(
 
     # tokenize text field
     dataset_dict = dataset_dict.map(
-        tokenize_text_lambda(tokenizer, input, max_length),
+        tokenize_text_lambda(tokenizer, input, second_input, max_length),
         batched=True,
     )
 
@@ -103,18 +113,29 @@ def prepare_dataset(
 
 class TextClassificationDataPipeline(ClassificationDataPipeline):
 
-    def __init__(self, tokenizer, input: str, max_length: int):
+    def __init__(self, tokenizer, input: str, max_length: int, second_input: Union[str, None] = None):
         self._tokenizer = tokenizer
         self._input = input
+        self._second_input = second_input
         self._max_length = max_length
         self._tokenize_fn = partial(
             self._tokenize_fn, tokenizer=self._tokenizer, input=self._input, max_length=self._max_length
         )
 
     @staticmethod
-    def _tokenize_fn(ex, tokenizer=None, input: str = None, max_length: int = None) -> Callable:
-        return tokenizer(
+    def _tokenize_fn(ex, tokenizer=None, input: str = None, max_length: int = None,
+                     second_input: Union[str, None] = None) -> Callable:
+
+        if second_input is None:
+            return lambda ex: tokenizer(
+                ex[input],
+                max_length=max_length,
+                truncation=True,
+                padding="max_length",
+            )
+        return lambda ex: tokenizer(
             ex[input],
+            text_pair=ex[second_input],
             max_length=max_length,
             truncation=True,
             padding="max_length",
@@ -161,17 +182,18 @@ class TextClassificationData(DataModule):
 
     @classmethod
     def from_files(
-        cls,
-        train_file,
-        input,
-        target,
-        filetype="csv",
-        backbone="prajjwal1/bert-tiny",
-        valid_file=None,
-        test_file=None,
-        max_length: int = 128,
-        batch_size: int = 16,
-        num_workers: Optional[int] = None,
+            cls,
+            train_file,
+            input,
+            target,
+            second_input=None,
+            filetype="csv",
+            backbone="prajjwal1/bert-tiny",
+            valid_file=None,
+            test_file=None,
+            max_length: int = 128,
+            batch_size: int = 16,
+            num_workers: Optional[int] = None,
     ):
         """Creates a TextClassificationData object from files.
 
@@ -179,6 +201,7 @@ class TextClassificationData(DataModule):
             train_file: Path to training data.
             input: The field storing the text to be classified.
             target: The field storing the class id of the associated text.
+            input: The field storing the second text for text pairs classification.
             filetype: .csv or .json
             backbone: tokenizer to use, can use any HuggingFace tokenizer.
             valid_file: Path to validation data.
@@ -209,6 +232,7 @@ class TextClassificationData(DataModule):
             backbone,
             input,
             max_length,
+            second_input=second_input,
             target=target,
             label_to_class_mapping=None
         )
@@ -222,25 +246,28 @@ class TextClassificationData(DataModule):
         )
 
         datamodule.num_classes = len(label_to_class_mapping)
-        datamodule.data_pipeline = TextClassificationDataPipeline(tokenizer, input=input, max_length=max_length)
+        datamodule.data_pipeline = TextClassificationDataPipeline(tokenizer, input=input, second_input=second_input,
+                                                                  max_length=max_length)
         return datamodule
 
     @classmethod
     def from_file(
-        cls,
-        predict_file: str,
-        input: str,
-        backbone="bert-base-cased",
-        filetype="csv",
-        max_length: int = 128,
-        batch_size: int = 16,
-        num_workers: Optional[int] = None,
+            cls,
+            predict_file: str,
+            input: str,
+            second_input: Union[str, None] = None,
+            backbone="bert-base-cased",
+            filetype="csv",
+            max_length: int = 128,
+            batch_size: int = 16,
+            num_workers: Optional[int] = None,
     ):
         """Creates a TextClassificationData object from files.
 
         Args:
             train_file: Path to training data.
             input: The field storing the text to be classified.
+            input: The field storing the second text for text pairs classification.
             filetype: .csv or .json
             backbone: tokenizer to use, can use any HuggingFace tokenizer.
             batch_size: the batchsize to use for parallel loading. Defaults to 64.
@@ -262,6 +289,7 @@ class TextClassificationData(DataModule):
             backbone,
             input,
             max_length,
+            second_input=second_input,
             predict=True,
         )
 
@@ -273,5 +301,6 @@ class TextClassificationData(DataModule):
             num_workers=num_workers,
         )
 
-        datamodule.data_pipeline = TextClassificationDataPipeline(tokenizer, input=input, max_length=max_length)
+        datamodule.data_pipeline = TextClassificationDataPipeline(tokenizer, input=input, second_input=second_input,
+                                                                  max_length=max_length)
         return datamodule
